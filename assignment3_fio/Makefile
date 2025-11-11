@@ -1,7 +1,7 @@
 
 CC = gcc
 
-CFLAGS = -g -Wall -Wextra -std=c11 -O2
+CFLAGS = -g -Wall -Wextra -std=c11 -O3 -march=native -msse4.2 -fopenmp
 
 SRC = fio_simulator.c
 

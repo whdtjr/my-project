@@ -1,0 +1,5 @@
+set pagination off
+run --test seq
+bt
+info registers
+quit
