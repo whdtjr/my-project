@@ -1,6 +1,6 @@
 # fio의 meta 방식을 이용하여 데이터 무결성 check simulator
 
-fio의 데이터 무결성 check 중에는 meta 방법이 있는데 해당 방법을 simulation으로 구현한다.
+fio의 데이터 무결성 check 중에는 meta 방법이 있는데 해당 방법을 실제 디스크 테스트용으로 구현한다.
 
 ## Building and Running
 ```bash
@@ -14,11 +14,13 @@ make
 ## Basic Knowledge
 
 fio의 meta 방식은 메모리 블록을 write할 때 데이터 앞 부분을 `verify_header`로 두고 해당 구조체에 `lba`, `time_stamp`, `checksum`, `offset` 값을 저장한다.
-`lba`는 fio가 읽을 때 부여하는 논리적 block 숫자로 sector라고도 불린다. OS에서는 1 LBA를 4096 byte로 보고 해당 블록을 기준으로 read, write한다. 이 시뮬레이션에서는 4096씩 데이터를 read, write한다.
+`lba`는 fio가 읽을 때 부여하는 논리적 block 숫자로 sector라고도 불린다. OS에서는 1 LBA를 512 byte로 보고 해당 블록을 기준으로 read, write한다. 이 테스트에서는 512 byte씩 데이터를 read, write한다.
 
 `timestamp`에는 현재 시간이 들어가고, `checksum`에서는 `crc32` checksum 알고리즘이 들어간다.
 
-- `crc32`에서 쓰이는 lookup table
+ `#include <smmintrin.h>`에 있는 intel의 하드웨어 crc 계산을 이용하였다.
+
+<!-- - `crc32`에서 쓰이는 lookup table
 ```C
 static const uint32_t crc32_table[256] = {
     0x00000000, 0x77073096, 0xEE0E612C, 0x990951BA, 0x076DC419, 0x706AF48F,
@@ -69,17 +71,19 @@ static const uint32_t crc32_table[256] = {
     0x54DE5729, 0x23D967BF, 0xB3667A2E, 0xC4614AB8, 0x5D681B02, 0x2A6F2B94,
     0xB40BBE37, 0xC30C8EA1, 0x5A05DF1B, 0x2D02EF8D
 };
-```
+``` -->
 
 write 시에는 메모리에 쓸 데이터를 `crc32` checksum 알고리즘을 이용하여 계산하고 `verify_header`에 넣어준다.
 
-`offset`은 해당 memory block이 0번째 주소에서 얼마나 떨어져 있는지를 나타낸다. 예를 들어 0번은 첫번째 Block이고 그 다음 memory block에서는 4096 이라는 `offset`이 있다.
+`offset`은 해당 memory 위치가 0번째 주소에서 얼마나 떨어져 있는지를 나타낸다. 예를 들어 0번은 첫번째 memory이고 그 다음 memory에서는 512이라는 `offset`이 있다.
 
 read를 할 때는 random으로 읽거나 순차적으로 읽어올 수 있다. read시 `lba`를 확인하여 `verify_header`에 쓰여진 것과 현재 읽을 `lba`가 서로 다른지 같은지 확인해야 한다. 그리고 `verify_header`를 읽고 checksum 값을 가져온다. 그리고 payload를 읽어와서 checksum 계산을 하고 값을 비교한다. 그리고 만약 다르다면 `time_stamp`와 `lba`를 출력해서 어디가 문제인지를 나타낸다.
 
 ### Core Design Pattern
 
 arg parsing을 통해 verify를 진행하게 된다. verify에서 --test를 넣으면 read, write를 테스트하게 된다.
+
+read, write 테스트는 `/dev/sdb` 의 파티션 안 된 실제 디스크에서 쓰게 된다.
 
 memory block안에 `verify_header`을 두고 메모리 블록의 데이터는 이 header 다음에 들어간다. 그래서 data 시작 위치를 알아야 한다.
 memory block마다 구조체의 크기 `offset`만큼을 더해서 시작 위치에 더해준 것을 시작 위치로 이용한다.
@@ -89,8 +93,12 @@ random test일 경우 LBA를 random으로 뽑아내서 확인한다. sequential 
 
 실행하면서 데이터에 결함이 있다면 log에 표시를 하면서 끝까지 진행한다.
 
+각 sector마다 crc 값이 다르게 저장된다.
+
+현재 속도 개선을 위해 병렬성을 추가하였다.
+
 ### key operation 
-- memory block size는 4096이다.
+- memory block size는 512이다.
 
 **simulation write**(`sim_write`):
 
