@@ -32,7 +32,9 @@ uint64_t PROGRESS_PERCENT = 0;
 uint64_t TOTAL_SIZE = 0;
 
 // verify_header 구조체
+#define VERIFY_MAGIC 0xDEADBEEF
 typedef struct {
+    uint32_t magic;        // Magic number for validation
     uint64_t lba;          // Logical Block Address
     uint64_t timestamp;    // 시간
     uint32_t checksum;     // CRC32 체크섬
@@ -138,6 +140,7 @@ void sim_write_block(uint64_t start_lba, const unsigned char *data, size_t data_
 
         // verify_header 설정
         verify_header *header = (verify_header *)sector;
+        header->magic = VERIFY_MAGIC;
         header->lba = lba;
         header->timestamp = timestamp;
         header->offset = lba * SECTOR_SIZE;
@@ -185,7 +188,6 @@ int sim_read_block(uint64_t start_lba) {
         return -1;
     }
 
-    // Thread-local 버퍼 사용 (메모리 할당/해제 오버헤드 제거)
     static thread_local unsigned char *block = NULL;
     if (block == NULL) {
         if (posix_memalign((void**)&block, ALIGNMENT, IO_BLOCK_SIZE) != 0) {
@@ -212,6 +214,12 @@ int sim_read_block(uint64_t start_lba) {
 
         // verify_header 읽기
         verify_header *header = (verify_header *)sector;
+
+        // Magic number 확인 - write되지 않은 섹터는 skip
+        if (header->magic != VERIFY_MAGIC) {
+            // Write되지 않은 섹터이므로 검증하지 않음
+            continue;
+        }
 
         // LBA 검증
         if (header->lba != lba) {
@@ -243,8 +251,7 @@ int sim_read_block(uint64_t start_lba) {
         }
     }
 
-    // Thread-local 버퍼는 재사용되므로 free하지 않음
-    return errors;  // 에러 섹터 개수 반환 (0 이상)
+    return errors;  
 }
 
 
@@ -389,7 +396,7 @@ void initialize_memory(void) {
             // 각 섹터마다 다른 패턴 생성
             uint64_t sector_in_block = i / SECTOR_SIZE;
             uint64_t lba = start_lba + sector_in_block;
-            data[i] = (unsigned char)((lba * 256 + i) % 256);
+            data[i] = (unsigned char)((lba * 7 + i) % 256);
         }
 
         sim_write_block(start_lba, data, IO_BLOCK_SIZE, thread_timestamp);
@@ -507,10 +514,12 @@ void print_sample_checksums(void) {
 }
 
 void print_usage(const char *prog_name) {
-    printf("Usage: %s --test <mode>\n", prog_name);
-    printf("Modes:\n");
-    printf("  seq     : Sequential read test\n");
-    printf("  random  : Random read test\n");
+    printf("Usage:\n");
+    printf("  %s --write                    : Write test data to device\n", prog_name);
+    printf("  %s --read --random            : Random read test\n", prog_name);
+    printf("  %s --read --seq               : Sequential read test\n", prog_name);
+    printf("  %s --corruption               : Introduce all data corruption types\n", prog_name);
+    printf("\nCorruption types applied:\n");
 }
 
 int main(int argc, char *argv[]) {
@@ -522,7 +531,47 @@ int main(int argc, char *argv[]) {
     printf("Payload Size per Sector: %llu bytes\n\n", SECTOR_SIZE - sizeof(verify_header));
 
     // 인자 파싱
-    if (argc != 3 || strcmp(argv[1], "--test") != 0) {
+    if (argc < 2) {
+        print_usage(argv[0]);
+        return 1;
+    }
+
+    bool do_write = false;
+    bool do_read = false;
+    bool do_random = false;
+    bool do_seq = false;
+    bool do_corruption = false;
+
+    // Parse arguments
+    if (strcmp(argv[1], "--write") == 0) {
+        if (argc != 2) {
+            print_usage(argv[0]);
+            return 1;
+        }
+        do_write = true;
+    } else if (strcmp(argv[1], "--read") == 0) {
+        if (argc != 3) {
+            print_usage(argv[0]);
+            return 1;
+        }
+        do_read = true;
+        if (strcmp(argv[2], "--random") == 0) {
+            do_random = true;
+        } else if (strcmp(argv[2], "--seq") == 0) {
+            do_seq = true;
+        } else {
+            printf("Error: Unknown read mode '%s'\n", argv[2]);
+            print_usage(argv[0]);
+            return 1;
+        }
+    } else if (strcmp(argv[1], "--corruption") == 0) {
+        if (argc != 2) {
+            print_usage(argv[0]);
+            return 1;
+        }
+        do_corruption = true;
+    } else {
+        printf("Error: Unknown command '%s'\n", argv[1]);
         print_usage(argv[0]);
         return 1;
     }
@@ -557,58 +606,32 @@ int main(int argc, char *argv[]) {
     printf("Total Size to Test: %lu bytes (%.2f GB)\n", TOTAL_SIZE, TOTAL_SIZE / (1024.0 * 1024.0 * 1024.0));
     printf("Block device opened successfully!\n\n");
 
-    
-    //struct timespec start, end_time;
-    //clock_gettime(CLOCK_MONOTONIC, &start); 
-    initialize_memory();
-    //clock_gettime(CLOCK_MONOTONIC, &end_time);
-
-    // double write_time = (end_time.tv_sec - start.tv_sec) +
-    //                     (end_time.tv_nsec - start.tv_nsec) / 1000000000.0;
-    // double write_throughput = (TOTAL_SIZE / (1024.0 * 1024.0)) / write_time; // MB/s
-    // double write_iops = NUM_BLOCKS / write_time;  
-    
-    // printf("\n === data corruption === \n");
-
-    // corruption(1);
-    // corruption(2);
-    // corruption(3);
-    // corruption(4);
-
-
-    // 테스트 모드 실행
-    if (strcmp(argv[2], "seq") == 0) {
-        //clock_gettime(CLOCK_MONOTONIC, &start);
-        test_sequential();
-    } else if (strcmp(argv[2], "random") == 0) {
-        //clock_gettime(CLOCK_MONOTONIC, &start);
-        test_random();
-    } else {
-        printf("Error: Unknown test mode '%s'\n", argv[2]);
-        print_usage(argv[0]);
-        close(device_fd);
-        return 1;
+    // Execute based on parsed arguments
+    if (do_write) {
+        initialize_memory();
+    } else if (do_read) {
+        if (do_random) {
+            test_random();
+        } else if (do_seq) {
+            test_sequential();
+        }
+    } else if (do_corruption) {
+        printf("\n=== Applying Data Corruption ===\n");
+        corruption(1);
+        printf("Applied corruption type 1: Checksum mismatch at LBA 5\n");
+        corruption(2);
+        printf("Applied corruption type 2: LBA mismatch at LBA 3\n");
+        corruption(3);
+        printf("Applied corruption type 3: Offset mismatch at LBA 1\n");
+        corruption(4);
+        printf("Applied corruption type 4: LBA and offset mismatch at LBA 4\n");
+        printf("\nAll corruption types applied successfully.\n");
     }
 
-    //clock_gettime(CLOCK_MONOTONIC, &end_time);
-    // double read_time = (end_time.tv_sec - start.tv_sec) +
-    //                    (end_time.tv_nsec - start.tv_nsec) / 1000000000.0;
-    // double read_throughput = (TOTAL_SIZE / (1024.0 * 1024.0)) / read_time; // MB/s
-    // double read_iops = NUM_BLOCKS / read_time;  // I/O operations per second (block 단위)
-
-    // printf("\n=== I/O Performance Metrics ===\n");
-    // printf("[WRITE]\n");
-    // printf("  Time: %.2f seconds\n", write_time);
-    // printf("  Throughput: %.2f MB/s\n", write_throughput);
-    // printf("  IOPS: %.0f ops/sec\n\n", write_iops);
-
-    // printf("[READ]\n");
-    // printf("  Time: %.2f seconds\n", read_time);
-    // printf("  Throughput: %.2f MB/s\n", read_throughput);
-    // printf("  IOPS: %.0f ops/sec\n", read_iops);
-
-    // 샘플 블록들의 CRC 값 출력
-    print_sample_checksums();
+    // 샘플 블록들의 CRC 값 출력 (write나 read 시에만)
+    if (do_write || do_read) {
+        print_sample_checksums();
+    }
 
     // 정리
     printf("\nCleaning up...\n");

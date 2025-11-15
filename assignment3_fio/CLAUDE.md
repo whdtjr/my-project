@@ -88,8 +88,10 @@ read, write 테스트는 `/dev/sdb` 의 파티션 안 된 실제 디스크에서
 memory block안에 `verify_header`을 두고 메모리 블록의 데이터는 이 header 다음에 들어간다. 그래서 data 시작 위치를 알아야 한다.
 memory block마다 구조체의 크기 `offset`만큼을 더해서 시작 위치에 더해준 것을 시작 위치로 이용한다.
 
-데이터 read를 하면서 random 모드, 순차 모드를 따로 둔다. 코드 실행 시 `--test random`, `--test seq` 이렇게 arguement를 따로 준다.
+데이터 read를 하면서 random 모드, 순차 모드를 따로 둔다. 코드 실행 시 `--read --seq`, `--read --random`, 이렇게 주게 되고 `--seq`이라면 sequential하게 read를 하는 것이고, `--random`이라면 random하게 read하는 것이다. `--write`를 하면 write를 하게 된다. 그리고 `--corruption`을 주면 4가지 모두에 대한 에러를 넣게 된다.
 random test일 경우 LBA를 random으로 뽑아내서 확인한다. sequential test일 경우 LBA를 0번부터 확인한다.
+
+만약 read 시에 `verify_header`를 보고 write된 것인지 안된 것인지 판단하여 `verfiy_header` 데이터가 있다면 read test를 하고 아니라면 test를 안하도록 해야한다.
 
 실행하면서 데이터에 결함이 있다면 log에 표시를 하면서 끝까지 진행한다.
 
